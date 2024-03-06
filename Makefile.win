@@ -1,11 +1,10 @@
-JMS_PATH=..\jms_repo
 VCPKG_PATH=..\third_party\vcpkg\installed\x64-windows-static
 VULKAN_PATH=C:\VulkanSDK\current
 
 CC = cl.exe
 LINK = link.exe
 GLSLC = glslc.exe
-CPPFLAGS = /std:c++latest /utf-8 /EHsc -Isrc -I$(JMS_PATH) -I$(VCPKG_PATH)\include -I$(VULKAN_PATH)\Include
+CPPFLAGS = /std:c++latest /utf-8 /EHsc -I. -Isrc -I$(VCPKG_PATH)\include -I$(VULKAN_PATH)\Include
 LDFLAGS = /SUBSYSTEM:CONSOLE /LIBPATH:$(VCPKG_PATH)\lib /LIBPATH:$(VULKAN_PATH)\lib
 LIBS = User32.lib Kernel32.lib Gdi32.lib Shell32.lib vulkan-1.lib glfw3.lib harfbuzz.lib
 
