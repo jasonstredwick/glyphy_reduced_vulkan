@@ -1,0 +1,34 @@
+JMS_PATH=..\jms_repo
+VCPKG_PATH=..\third_party\vcpkg\installed\x64-windows-static
+VULKAN_PATH=C:\VulkanSDK\current
+
+CC = cl.exe
+LINK = link.exe
+GLSLC = glslc.exe
+CPPFLAGS = /std:c++latest /utf-8 /EHsc -Isrc -I$(JMS_PATH) -I$(VCPKG_PATH)\include -I$(VULKAN_PATH)\Include
+LDFLAGS = /SUBSYSTEM:CONSOLE /LIBPATH:$(VCPKG_PATH)\lib /LIBPATH:$(VULKAN_PATH)\lib
+LIBS = User32.lib Kernel32.lib Gdi32.lib Shell32.lib vulkan-1.lib glfw3.lib harfbuzz.lib
+
+EXES = glyphy.exe
+GLYPHY = main_glyphy.obj shader.vert.spv shader.glyphy.frag.spv
+
+
+all: $(EXES)
+glyphy: glyphy.exe
+
+
+shader.vert.spv: src/glyphy/shader.vert
+    $(GLSLC) src/glyphy/shader.vert -o shader.vert.spv
+
+shader.glyphy.frag.spv: src/glyphy/glyph/glyphy/shader.frag
+    $(GLSLC) src/glyphy/glyph/glyphy/shader.frag -o shader.glyphy.frag.spv
+
+#.cpp.obj is a predefined rule ... includes /c so not needed in CPPFLAGS
+main_glyphy.obj: src/main_glyphy.cpp
+    $(CC) $(CPPFLAGS) /c src/main_glyphy.cpp
+
+glyphy.exe: $(GLYPHY)
+    $(LINK) $(LDFLAGS) main_glyphy.obj -out:glyphy.exe $(LIBS)
+
+clean:
+    del $(EXES) $(GLYPHY)
