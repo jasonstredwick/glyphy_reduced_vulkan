@@ -45,41 +45,42 @@ struct AtlasDataUnit {
 
 GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, const uint32_t glyph_index) {
     const uint32_t upem = fontface.Upem();
-    const double upem_d = static_cast<double>(upem);
-    const double scale = 1.0 / upem_d;
-    //const double font_size = MIN_FONT_SIZE;
-    //const double faraway = upem_d / (font_size * std::numbers::sqrt2); // 103
-    //const double enlighten = upem_d * ENLIGHTEN_MAX;                   // 20.48
-    //const double embolden = upem_d * EMBOLDEN_MAX;                     // 49.152
-    const double tolerance = 0.5;//upem_d * DEFAULT_EXTRACT_TOLERANCE; // in font design units
+    const double em_scale = 1.0 / static_cast<double>(upem);
+    const double tolerance = 0.5;//em_scale * DEFAULT_EXTRACT_TOLERANCE; // in font design units
 
     GlyphExtractor glyph_extractor{tolerance};
     glyphy::harfbuzz::FontGetGlyphShape<GlyphExtractor, double>(fontface.Font(), glyph_index, &glyph_extractor);
-    if (!glyph_extractor.endpoints.size()) { return {.upem=upem}; }
+    if (glyph_extractor.endpoints.empty()) { return {.upem=upem}; }
 
     // May reverse subset of endpoints and negate their d value;
     // but otherwise no addition, removal, or modification of endpoints.
     //glyphy::outline::WindingFromEvenOdd(glyph_extractor.endpoints, false);
 
-    // Scale and make adjustments to ensure glyphy lies on [0, 1] ranges.  Return adjustments so they can be taken
-    // into account when preparing for rendering.
-    std::ranges::for_each(glyph_extractor.endpoints, [scale](auto& e) { e.p *= scale; });
+    // Scale to the unit em.
+    std::ranges::for_each(glyph_extractor.endpoints, [em_scale](auto& e) { e.p *= em_scale; e.d=0.0; });
+
+    // Constrain surface to the area containing shape data.
     Extents extents{};
     std::ranges::for_each(glyph_extractor.endpoints, [&extents](auto& p) { extents.Add(p); }, &Endpoint::p);
-    double width = extents.max_x - extents.min_x;
-    double height = extents.max_y - extents.min_y;
-    std::ranges::for_each(glyph_extractor.endpoints, [&width, &height, &extents](auto& p) {
-        p.x = (p.x - extents.min_x) / width;
-        p.y = (p.y - extents.min_y) / height;
+    const glm::dvec2 offsets{extents.min_x, extents.min_y};
+    const glm::dvec2 dims{extents.max_x - extents.min_x, extents.max_y - extents.min_y};
+    const double uniform_dim = std::ranges::max(dims.x, dims.y);
+
+    // Normalize data to [0..1] range.
+    std::ranges::for_each(glyph_extractor.endpoints, [&dims, &offsets, uniform_dim](auto& p) {
+        p.x = (p.x - offsets.x) / uniform_dim;
+        p.y = (p.y - offsets.y) / uniform_dim;
     }, &Endpoint::p);
 
-    // Convert Glyph data and information to shader compatible as needed.
+    // Compile result
     GlyphData<AtlasDataUnit> glyph_data{
-        .dims={width, height},
-        .offsets={extents.min_x, extents.min_y},
+        .offsets=offsets,
+        .dims=dims,
+        .uniform_dim=uniform_dim,
         .upem=upem
     };
     glyph_data.atlas_data.reserve(glyph_extractor.endpoints.size());
+    // Convert data for shader.
     std::ranges::transform(glyph_extractor.endpoints, std::back_inserter(glyph_data.atlas_data), [](auto& endpoint) {
         return AtlasDataUnit{
             .p={static_cast<float>(endpoint.p.x), static_cast<float>(endpoint.p.y)},

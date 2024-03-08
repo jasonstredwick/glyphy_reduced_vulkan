@@ -37,8 +37,7 @@
 #include "glyphy/math.hpp"
 
 
-namespace glyphy {
-namespace outline {
+namespace glyphy::outline {
 
 
 constexpr const double EPSILON = 1e-9; // integer portion ranges [0, 2^14]
@@ -268,7 +267,7 @@ bool Winding(const std::span<const Endpoint>& endpoints) {
 
 
 // Returns true if outline was modified
-bool WindingFromEvenOdd(std::vector<Endpoint>& endpoints, bool inverse) {
+bool WindingFromEvenOdd(std::vector<Endpoint>& endpoints) {
     /*
      * Algorithm:
      *
@@ -276,6 +275,9 @@ bool WindingFromEvenOdd(std::vector<Endpoint>& endpoints, bool inverse) {
      * - No short circuit on ret == true, as ProcessContour call chain also modifies endpoints.
      */
 
+    if (endpoints.empty()) { return false; }
+
+    bool inverse = false;
     bool ret = false;
     size_t start = 0; // starting with the first endpoint, include endpoints until you reach one with d == infinity
     // [infinite, (finite)*]
@@ -292,5 +294,4 @@ bool WindingFromEvenOdd(std::vector<Endpoint>& endpoints, bool inverse) {
 #endif
 
 
-} // namespace outline
-} // namespace glyphy
+}

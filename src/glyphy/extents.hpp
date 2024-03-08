@@ -53,11 +53,11 @@ struct Extents {
         return !std::isfinite(min_x) || !std::isfinite(min_y) || !std::isfinite(max_x) || !std::isfinite(max_y);
     }
 
-    constexpr void Scale(const double x_scale, const double y_scale) {
-        min_x *= x_scale;
-        max_x *= x_scale;
-        min_y *= y_scale;
-        max_y *= y_scale;
+    constexpr void Scale(const glm::dvec2& scale) {
+        min_x *= scale.x;
+        max_x *= scale.x;
+        min_y *= scale.y;
+        max_y *= scale.y;
     }
 };
 

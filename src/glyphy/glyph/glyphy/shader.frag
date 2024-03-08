@@ -129,7 +129,8 @@ void main() {
     if (gsdist < 0.015) {
         color = vec4(1.0, 1.0, 1.0, 1.0);
     } else {
-        discard; //color = vec4(1.0, 0.0, 0.0, 1.0);
+        //color = vec4(1.0, 0.0, 0.0, 1.0);
+        discard;
     }
 
     //color = vec4(vec3(1.0f) * (color.a * alpha), 1.0f);

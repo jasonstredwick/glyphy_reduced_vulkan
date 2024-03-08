@@ -31,6 +31,7 @@
 #include "glyphy/glm.hpp"
 
 #include "glyphy/cache.hpp"
+#include "glyphy/extents.hpp"
 #include "glyphy/harfbuzz/buffer.hpp"
 #include "glyphy/harfbuzz/fontface.hpp"
 #include "glyphy/shader.hpp"
@@ -46,6 +47,12 @@
 namespace glyphy {
 
 
+struct FormattedInfo {
+    glm::dvec2 dims{0.0, 0.0};
+    glm::dvec2 pos{0.0, 0.0};
+};
+
+
 struct Buffer {
     glm::dvec2 cursor{};
     std::string utf8_contents{};
@@ -55,12 +62,19 @@ struct Buffer {
         utf8_contents.clear();
     }
 
-    glyphy::shader::TextVertexData AddText(const std::string_view& text, auto& glyph_cache, double font_size);
+    glyphy::shader::TextVertexData AddText(const std::string_view& text, auto& glyph_cache, const double font_size);
     void MoveTo(const glm::dvec2& p) { cursor = p; }
 };
 
 
-glyphy::shader::TextVertexData Buffer::AddText(const std::string_view& text, auto& glyph_cache, double font_size) {
+glyphy::shader::TextVertexData Buffer::AddText(const std::string_view& text,
+                                               auto& glyph_cache,
+                                               const double font_size) {
+    //const double font_size = MIN_FONT_SIZE;
+    //const double faraway = upem_d / (font_size * std::numbers::sqrt2); // 103
+    //const double enlighten = upem_d * ENLIGHTEN_MAX;                   // 20.48
+    //const double embolden = upem_d * EMBOLDEN_MAX;                     // 49.152
+
     uint32_t index = 0;
     glyphy::shader::TextVertexData result{};
     result.vertices.reserve(text.size() * 4);
@@ -89,23 +103,18 @@ glyphy::shader::TextVertexData Buffer::AddText(const std::string_view& text, aut
         for (auto [info, pos] : std::views::zip(infos, positions)) {
             auto glyph_index = info.codepoint;
 
-            const GlyphInfo& glyph_info = glyph_cache.GetOrExtractGlyph(glyph_index);
-            const double upem_d = static_cast<double>(glyph_info.upem);
-            const double harfbuzz_offset_x = static_cast<double>(pos.x_offset) / upem_d; // scale to unit glyph
-            const double harfbuzz_offset_y = static_cast<double>(pos.y_offset) / upem_d; // scale to unit glyph
-            const double harfbuzz_advance_x = static_cast<double>(pos.x_advance) / upem_d; // scale to unit glyph
-            const double harfbuzz_advance_y = static_cast<double>(pos.y_advance) / upem_d; // scale to unit glyph
-            const glm::dvec2 position{
-                cursor.x + (harfbuzz_offset_x + glyph_info.offsets.x) * font_size,
-                cursor.y + (harfbuzz_offset_y + glyph_info.offsets.y) * font_size
-            };
-            const glm::dvec2 font_dims{
-                glyph_info.dims.x * font_size,
-                glyph_info.dims.y * font_size
-            };
+            const GlyphCachedInfo& glyph_info = glyph_cache.GetOrExtractGlyph(glyph_index);
+            const double em_scale = 1.0 / static_cast<double>(glyph_info.upem);
 
             if (glyph_info.num_units) {
-                const auto encoded_vertices = glyphy::shader::EncodeVertex(position, font_dims);
+                const auto harfbuzz_offsets = glm::dvec2{
+                    static_cast<double>(pos.x_offset),
+                    static_cast<double>(pos.y_offset)
+                } * em_scale;
+                const glm::dvec2 vpos = cursor + (harfbuzz_offsets + glyph_info.offsets) * font_size;
+                const glm::dvec2 vdims = glm::dvec2{glyph_info.uniform_dim, glyph_info.uniform_dim} * font_size;
+
+                const auto encoded_vertices = glyphy::shader::EncodeVertex(vpos, vdims);
                 const auto encoded_vertex_data = glyphy::shader::EncodeVertexData(glyph_info.atlas_id,
                                                                                   glyph_info.num_units);
 
@@ -131,10 +140,11 @@ glyphy::shader::TextVertexData Buffer::AddText(const std::string_view& text, aut
                 index += 4;
             }
 
-            const double advance_x = harfbuzz_advance_x * font_size;
-            const double advance_y = harfbuzz_advance_y * font_size;
-
-            cursor.x += advance_x;
+            const auto harfbuzz_advance = glm::dvec2{
+                static_cast<double>(pos.x_advance),
+                static_cast<double>(pos.y_advance)
+            } * em_scale;
+            cursor.x += harfbuzz_advance.x * font_size;
         }
 
         if (end) {
