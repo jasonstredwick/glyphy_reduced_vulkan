@@ -57,7 +57,7 @@ GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, cons
     //glyphy::outline::WindingFromEvenOdd(glyph_extractor.endpoints, false);
 
     // Scale to the unit em.
-    std::ranges::for_each(glyph_extractor.endpoints, [em_scale](auto& e) { e.p *= em_scale; e.d=0.0; });
+    std::ranges::for_each(glyph_extractor.endpoints, [em_scale](auto& e) { e.p *= em_scale; });
 
     // Constrain surface to the area containing shape data.
     Extents extents{};
