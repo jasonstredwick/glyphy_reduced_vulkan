@@ -1,3 +1,5 @@
+# nmake -f Makefile.win
+
 VCPKG_PATH=..\third_party\vcpkg\installed\x64-windows-static
 VULKAN_PATH=C:\VulkanSDK\current
 
@@ -8,12 +10,14 @@ CPPFLAGS = /std:c++latest /utf-8 /EHsc -I. -Isrc -I$(VCPKG_PATH)\include -I$(VUL
 LDFLAGS = /SUBSYSTEM:CONSOLE /LIBPATH:$(VCPKG_PATH)\lib /LIBPATH:$(VULKAN_PATH)\lib
 LIBS = User32.lib Kernel32.lib Gdi32.lib Shell32.lib vulkan-1.lib glfw3.lib harfbuzz.lib
 
-EXES = glyphy.exe
+EXES = glyphy.exe glyphy_reduced.exe
 GLYPHY = main_glyphy.obj shader.vert.spv shader.glyphy.frag.spv
+GLYPHY_REDUCED = main_glyphy_reduced.obj shader.vert.spv shader.glyphy_reduced.frag.spv
 
 
 all: $(EXES)
 glyphy: glyphy.exe
+glyphy_reduced: glyphy_reduced.exe
 
 
 shader.vert.spv: src/glyphy/shader.vert
@@ -22,12 +26,21 @@ shader.vert.spv: src/glyphy/shader.vert
 shader.glyphy.frag.spv: src/glyphy/glyph/glyphy/shader.frag
     $(GLSLC) src/glyphy/glyph/glyphy/shader.frag -o shader.glyphy.frag.spv
 
+shader.glyphy_reduced.frag.spv: src/glyphy/glyph/glyphy_reduced/shader.frag
+    $(GLSLC) src/glyphy/glyph/glyphy_reduced/shader.frag -o shader.glyphy_reduced.frag.spv
+
 #.cpp.obj is a predefined rule ... includes /c so not needed in CPPFLAGS
 main_glyphy.obj: src/main_glyphy.cpp
     $(CC) $(CPPFLAGS) /c src/main_glyphy.cpp
 
+main_glyphy_reduced.obj: src/main_glyphy_reduced.cpp
+    $(CC) $(CPPFLAGS) /c src/main_glyphy_reduced.cpp
+
 glyphy.exe: $(GLYPHY)
     $(LINK) $(LDFLAGS) main_glyphy.obj -out:glyphy.exe $(LIBS)
 
+glyphy_reduced.exe: $(GLYPHY_REDUCED)
+    $(LINK) $(LDFLAGS) main_glyphy_reduced.obj -out:glyphy_reduced.exe $(LIBS)
+
 clean:
-    del $(EXES) $(GLYPHY)
+    del $(EXES) $(GLYPHY) $(GLYPHY_REDUCED)
