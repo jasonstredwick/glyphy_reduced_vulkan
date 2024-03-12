@@ -32,6 +32,7 @@ template <typename AtlasDataUnit_t>
 struct GlyphData {
     glm::dvec2 offsets{0.0, 0.0};
     glm::dvec2 dims{0.0, 0.0};
+    glm::vec4 atlas_info{0.0, 0.0, 0.0, 0.0};
     double uniform_dim{0.0};
     uint32_t upem{0};
     std::vector<AtlasDataUnit_t> atlas_data{};

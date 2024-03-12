@@ -32,8 +32,8 @@
 
 #include "glyphy/glm.hpp"
 
-#include "glyphy/glyph/glyphy/arc.hpp"
-#include "glyphy/glyph/glyphy/glyph.hpp"
+#include "glyphy/glyph/glyphy_reduced/arc.hpp"
+#include "glyphy/glyph/glyphy_reduced/endpoint.hpp"
 #include "glyphy/math.hpp"
 
 

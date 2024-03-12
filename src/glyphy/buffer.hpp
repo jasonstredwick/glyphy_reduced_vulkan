@@ -115,8 +115,7 @@ glyphy::shader::TextVertexData Buffer::AddText(const std::string_view& text,
                 const glm::dvec2 vdims = glm::dvec2{glyph_info.uniform_dim, glyph_info.uniform_dim} * font_size;
 
                 const auto encoded_vertices = glyphy::shader::EncodeVertex(vpos, vdims);
-                const auto encoded_vertex_data = glyphy::shader::EncodeVertexData(glyph_info.atlas_id,
-                                                                                  glyph_info.num_units);
+                const auto encoded_vertex_data = glyphy::shader::EncodeVertexData(glyph_info.atlas_info);
 
                 // TODO: Once available, update to append_range
                 result.vertices.push_back(encoded_vertices[0]);

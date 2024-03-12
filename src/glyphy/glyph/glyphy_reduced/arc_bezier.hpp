@@ -14,7 +14,7 @@
 
 #include "glyphy/glm.hpp"
 
-#include "glyphy/glyph/glyphy/arc.hpp"
+#include "glyphy/glyph/glyphy_reduced/arc.hpp"
 #include "glyphy/bezier.hpp"
 #include "glyphy/math.hpp"
 
@@ -213,7 +213,8 @@ class ApproximatorSpringSystem {
             }
             for (size_t i = 0; i < N; i++) {
                 double k_inv = error[i];
-                double segment_length = k_inv / total;
+                // Need to ensure minimum segment length in order to avoid NaNs.
+                double segment_length = std::ranges::max(k_inv / total, 2.0 * std::numeric_limits<double>::epsilon());
                 t[i + 1] = t[i] + segment_length;
             }
             t[N] = 1.0; // Do this to get real 1.0, not .9999999999999998!

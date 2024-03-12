@@ -10,9 +10,10 @@
 
 #include "glyphy/extents.hpp"
 #include "glyphy/glyph_data.hpp"
-#include "glyphy/glyph/glyphy/endpoint.hpp"
-#include "glyphy/glyph/glyphy/extractor.hpp"
-//#include "glyphy/glyph/glyphy/outline.hpp"
+#include "glyphy/glyph/glyphy_reduced/arc.hpp"
+#include "glyphy/glyph/glyphy_reduced/endpoint.hpp"
+#include "glyphy/glyph/glyphy_reduced/extractor.hpp"
+#include "glyphy/glyph/glyphy_reduced/outline.hpp"
 #include "glyphy/harfbuzz/fontface.hpp"
 #include "glyphy/harfbuzz/shape.hpp"
 
@@ -54,7 +55,7 @@ GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, cons
 
     // May reverse subset of endpoints and negate their d value;
     // but otherwise no addition, removal, or modification of endpoints.
-    //glyphy::outline::WindingFromEvenOdd(glyph_extractor.endpoints, false);
+    glyphy::outline::WindingFromEvenOdd(glyph_extractor.endpoints);
 
     // Scale to the unit em.
     std::ranges::for_each(glyph_extractor.endpoints, [em_scale](auto& e) { e.p *= em_scale; });
@@ -66,6 +67,16 @@ GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, cons
     const glm::dvec2 dims{extents.max_x - extents.min_x, extents.max_y - extents.min_y};
     const double uniform_dim = std::ranges::max(dims.x, dims.y);
 
+    // Extract "side" information used for sdf interior calculations
+    glm::vec4 atlas_info{
+        std::numeric_limits<float>::infinity(), static_cast<float>(glyph_extractor.endpoints.size()), 1.0, 0.0};
+    if (!glyph_extractor.endpoints.empty()) {
+        const glm::dvec2 p_center = Midpoint(offsets, {extents.max_x, extents.max_y});
+        const double epsilon = static_cast<double>(GLYPHY_EPSILON);
+        double min_dist = SdfFromArcList(glyph_extractor.endpoints, p_center, epsilon);
+        atlas_info[2] = min_dist >= 0.0 ? +1.0f : -1.0f;
+    }
+
     // Normalize data to [0..1] range.
     std::ranges::for_each(glyph_extractor.endpoints, [&dims, &offsets, uniform_dim](auto& p) {
         p.x = (p.x - offsets.x) / uniform_dim;
@@ -76,6 +87,7 @@ GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, cons
     GlyphData<AtlasDataUnit> glyph_data{
         .offsets=offsets,
         .dims=dims,
+        .atlas_info=atlas_info,
         .uniform_dim=uniform_dim,
         .upem=upem
     };
@@ -88,6 +100,11 @@ GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, cons
         };
     });
     return glyph_data;
+}
+
+
+glm::vec4 UpdateAtlasInfo(const glm::vec4& atlas_info, const size_t atlas_id) {
+    return {static_cast<float>(atlas_id), atlas_info[1], atlas_info[2], atlas_info[3]};
 }
 
 

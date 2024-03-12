@@ -144,7 +144,7 @@ template <ErrorApproximator_c ErrorApproximator>
 struct ApproximatorMidpointSimple {
     static const Arc ApproximateBezierWithArc(const Bezier &bezier, double& error) {
         // Should Midpoint be LerpPoint(bezier, 0.5)? Otherwise the point may not be on the curve.
-        Arc arc = CreateArc(bezier.p0, bezier.p3, Midpoint(bezier));
+        Arc arc = CreateArc(bezier.p0, bezier.p3, Midpoint(bezier), false);
         error = ErrorApproximator::ApproximateError(bezier, arc);
         return arc;
     }
@@ -159,14 +159,16 @@ struct ApproximatorMidpointTwoPart {
         const Bezier& right_bezier = split_beziers[1];
         glm::dvec2 mid_point = right_bezier.p0;
 
-        Arc left_arc = CreateArc(left_bezier.p0, left_bezier.p3, LerpPoint(left_bezier, 0.5));
-        Arc right_arc = CreateArc(right_bezier.p0, right_bezier.p3, LerpPoint(right_bezier, 0.5));
+        //Arc left_arc = CreateArc(bezier.p0, mid_point, bezier.p3, true);
+        //Arc right_arc = CreateArc(mid_point, bezier.p3, bezier.p0, true);
+        Arc left_arc = CreateArc(left_bezier.p0, left_bezier.p3, LerpPoint(left_bezier, 0.5), false);
+        Arc right_arc = CreateArc(right_bezier.p0, right_bezier.p3, LerpPoint(right_bezier, 0.5), false);
 
         double e0 = ErrorApproximator::ApproximateError(left_bezier, left_arc);
         double e1 = ErrorApproximator::ApproximateError(right_bezier, right_arc);
         error = glm::max(e0, e1);
 
-        return CreateArc(bezier.p0, bezier.p3, mid_point);
+        return CreateArc(bezier.p0, bezier.p3, mid_point, false);
     }
 };
 
@@ -213,7 +215,8 @@ class ApproximatorSpringSystem {
             }
             for (size_t i = 0; i < N; i++) {
                 double k_inv = error[i];
-                double segment_length = k_inv / total;
+                // Need to ensure minimum segment length in order to avoid NaNs.
+                double segment_length = std::ranges::max(k_inv / total, 2.0 * std::numeric_limits<double>::epsilon());
                 t[i + 1] = t[i] + segment_length;
             }
             t[N] = 1.0; // Do this to get real 1.0, not .9999999999999998!

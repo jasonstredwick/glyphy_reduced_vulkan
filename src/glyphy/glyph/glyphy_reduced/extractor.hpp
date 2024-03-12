@@ -6,8 +6,8 @@
 
 #include "glyphy/glm.hpp"
 
-#include "glyphy/glyph/glyphy/arc_bezier.hpp"
-#include "glyphy/glyph/glyphy/endpoint.hpp"
+#include "glyphy/glyph/glyphy_reduced/arc_bezier.hpp"
+#include "glyphy/glyph/glyphy_reduced/endpoint.hpp"
 #include "glyphy/harfbuzz/glyph_extractor.hpp"
 
 

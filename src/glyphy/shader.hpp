@@ -29,7 +29,7 @@ constexpr const float GLYPHY_INFINITY = 1e9f;
  * GLSL compatible structures.
  */
 struct GlyphInfo {
-    glm::vec4 dim{0.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec4 dim{1.0f, 1.0f, 1.0f, 0.0f};
 #if 0
             float u_contrast{1.0f};
             float u_gamma_adjust{1.0f};
@@ -83,14 +83,12 @@ std::array<Vertex, 4> EncodeVertex(const glm::dvec2& position, const glm::dvec2&
 }
 
 
-std::array<VertexData, 4> EncodeVertexData(const size_t atlas_index, const size_t num_endpoints) {
-    float ai = static_cast<float>(static_cast<uint32_t>(atlas_index));
-    float num = static_cast<float>(static_cast<uint32_t>(num_endpoints));
+std::array<VertexData, 4> EncodeVertexData(const glm::vec4& atlas_info) {
     return {
-        VertexData{.atlas_info={ai, num, 0.0f, 0.0f}, .corners=glm::vec2(0.0f, 0.0f)},
-        VertexData{.atlas_info={ai, num, 0.0f, 0.0f}, .corners=glm::vec2(0.0f, 1.0f)},
-        VertexData{.atlas_info={ai, num, 0.0f, 0.0f}, .corners=glm::vec2(1.0f, 0.0f)},
-        VertexData{.atlas_info={ai, num, 0.0f, 0.0f}, .corners=glm::vec2(1.0f, 1.0f)}
+        VertexData{.atlas_info=atlas_info, .corners=glm::vec2(0.0f, 0.0f)},
+        VertexData{.atlas_info=atlas_info, .corners=glm::vec2(0.0f, 1.0f)},
+        VertexData{.atlas_info=atlas_info, .corners=glm::vec2(1.0f, 0.0f)},
+        VertexData{.atlas_info=atlas_info, .corners=glm::vec2(1.0f, 1.0f)}
     };
 }
 

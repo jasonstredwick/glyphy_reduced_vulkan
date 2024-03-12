@@ -61,7 +61,7 @@ float DistanceToArc(const vec2 p0, const vec2 p1, float d, const vec2 target) {
 }
 
 
-float SDF(int endpoint_start_index, int num_endpoints, float start_side_side, vec2 target) {
+float SDF(int endpoint_start_index, int num_endpoints, float start_side, vec2 target) {
     float min_dist = GLYPHY_INFINITY;
 
     Endpoint_t endpoint = endpoints[endpoint_start_index];
@@ -88,37 +88,30 @@ float SDF(int endpoint_start_index, int num_endpoints, float start_side_side, ve
  * main
  */
 void main() {
+    /* isotropic antialiasing */
+    vec2 dpdx = dFdx(uv);
+    vec2 dpdy = dFdy(uv);
+    float mag = length(vec2(length(dpdx), length(dpdy))) * GLYPHY_SQRT2_2;
+
     float u_contrast = gsb_vals[0];
     float u_gamma_adjust = gsb_vals[1];
     float u_outline_thickness = gsb_vals[2];
     float u_boldness = gsb_vals[3];
     bool u_outline = u_outline_thickness < 0.0;
 
-
-    /* isotropic antialiasing */
-    //vec2 dpdx = dFdx(uv);
-    //vec2 dpdy = dFdy(uv);
-    //float mag = length(vec2(length(dpdx), length(dpdy))) * GLYPHY_SQRT2_2;
-
     int endpoint_start_index = int(atlas_info[0]);
     int num_endpoints = int(atlas_info[1]);
-    float start_side_side = atlas_info[2];
-    float gsdist = SDF(endpoint_start_index, num_endpoints, start_side_side, uv);
+    float start_side = atlas_info[2];
+    float gsdist = SDF(endpoint_start_index, num_endpoints, start_side, uv);
+    gsdist -= u_boldness;
+    float sdist = gsdist / mag * u_contrast;
 
-    //gsdist -= u_boldness;
-    //float sdist = gsdist / mag * u_contrast;
-
-    #ifdef GLYPHY_DEBUG
-    //outColor = DebugDraw(p, sdist, gsdist, glyph_info.nominal_size, u_atlas_tex, u_atlas_info, glyph_info.atlas_pos);
-    //return;
-    #endif
-
-    vec4 color = vec4(0, 0, 0, 1);
-    //if (u_outline) { sdist = abs(sdist) - u_outline_thickness * 0.5; }
-    //if (sdist > 1.0f) { sdist = 1.0f; }//  discard; }
-    //float alpha = smoothstep(-0.75, +0.75, -sdist);
-    //if (u_gamma_adjust != 1.0f) { alpha = pow(alpha, 1.0 / u_gamma_adjust); }
-    //color = vec4(color.rgb, color.a * alpha);
+    vec4 color = vec4(1, 1, 1, 1);
+    if (u_outline) { sdist = abs(sdist) - u_outline_thickness * 0.5; }
+    if (sdist > 1.0f) { discard; }
+    float alpha = smoothstep(-0.75, +0.75, -sdist);
+    if (u_gamma_adjust != 1.0f) { alpha = pow(alpha, 1.0 / u_gamma_adjust); }
+    color = vec4(color.rgb, color.a * alpha);
     //color = vec4(vec3(1.0 * float(ee.p.x >= 0.155762 && ee.p.x < 0.155762), 0, 0), 1);
     //color = vec4(vec3(float(endpoint_start_index) / float(num_endpoints) , 0, 0), 1);
 
@@ -126,12 +119,12 @@ void main() {
     //Endpoint_t ee = endpoints[13];
     //color = vec4(vec3(ee.p.x, ee.p.y, ee.d), 1);
     //if (gsdist > 0) {// discard; }
-    if (gsdist < 0.015) {
-        color = vec4(1.0, 1.0, 1.0, 1.0);
-    } else {
+    //if (gsdist < 0.015) {
+    //    color = vec4(1.0, 1.0, 1.0, 1.0);
+    //} else {
         //color = vec4(1.0, 0.0, 0.0, 1.0);
-        discard;
-    }
+    //    discard;
+    //}
 
     //color = vec4(vec3(1.0f) * (color.a * alpha), 1.0f);
     //vec4 rgba = texture(u_atlas_tex, glyph_info.position);
@@ -198,8 +191,8 @@ float Glyphy_ArcExtendedDist(const Arc_t a, const vec2 p) {
 }
 
 
-float Glyphy_SDF(int endpoint_start_index, int num_endpoints, float start_side_side, vec2 target) {
-    float side = start_side_side;
+float Glyphy_SDF(int endpoint_start_index, int num_endpoints, float start_side, vec2 target) {
+    float side = start_side;
     float min_dist = GLYPHY_INFINITY;
     Arc_t closest_arc;
 

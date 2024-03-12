@@ -33,7 +33,7 @@
 #include "glyphy/glm.hpp"
 
 #include "glyphy/glyph/glyphy/arc.hpp"
-#include "glyphy/glyph/glyphy/glyph.hpp"
+#include "glyphy/glyph/glyphy/endpoint.hpp"
 #include "glyphy/math.hpp"
 
 

@@ -41,6 +41,9 @@
 #include <glm/gtx/string_cast.hpp>
 
 
+#include "glyphy/shader.hpp"
+
+
 constexpr const size_t WINDOW_WIDTH{1024};
 constexpr const size_t WINDOW_HEIGHT{1024};
 
@@ -147,9 +150,10 @@ struct DrawState {
  */
 jms::vulkan::State CreateEnvironment(const AppState&, std::optional<jms::wsi::glfw::Window*> = std::nullopt);
 void DrawFrame(DrawState& draw_state);
-template <typename AtlasUnit_t, typename TextVertexData_t>
+template <typename AtlasUnit_t>
 void Run(const std::vector<AtlasUnit_t>& atlas_buffer_data,
-         const TextVertexData_t& text_vertex_data,
+         const glyphy::shader::TextVertexData& text_vertex_data,
+         const glyphy::shader::GlyphInfo& glyph_state,
          const std::string_view& frag_shader_path);
 
 
@@ -327,9 +331,10 @@ void DrawFrame(DrawState& draw_state) {
 }
 
 
-template <typename AtlasUnit_t, typename TextVertexData_t>
+template <typename AtlasUnit_t>
 void Run(const std::vector<AtlasUnit_t>& atlas_buffer_data,
-         const TextVertexData_t& text_vertex_data,
+         const glyphy::shader::TextVertexData& text_vertex_data,
+         const glyphy::shader::GlyphInfo& glyph_state,
          const std::string_view& frag_shader_path) {
     AppState app_state{};
 
@@ -503,7 +508,7 @@ void Run(const std::vector<AtlasUnit_t>& atlas_buffer_data,
     std::ranges::copy(text_vertex_data.indices, indices.begin());
     // begin tmp
     model_data[0] = glyphy::shader::ModelInfo{};
-    gsb_data[0] = glyphy::shader::GlyphInfo{};
+    gsb_data[0] = glyph_state;
     // end tmp
     // update atlas image
     // msvc doesn't currently allow std::span with std::ranges::copy
