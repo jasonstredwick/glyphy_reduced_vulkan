@@ -3,6 +3,7 @@
 
 #include <array>
 #include <limits>
+#include <span>
 #include <vector>
 
 #include "glyphy/glm.hpp"
@@ -22,20 +23,24 @@ namespace glyphy {
 
 
 /***
+ * Constants
+ */
+constexpr const double ONE_DEGREE = 1.0 * (glm::pi<glm::f64>() / 180.0);
+
+
+/***
  * Forward declarations
  */
 struct Arc;
+
 
 // Creation functions
 Arc CreateArc(const glm::dvec2 &p0, const glm::dvec2 &p1, const glm::dvec2 &pm);
 
 // Descriptive functions
 glm::dvec2 Center(const Arc&);
-double ExtendedDist(const Arc& arc, const glm::dvec2& p);
-double Radius(const Arc&);
+template <typename Rng_t> std::vector<glm::dvec2> LerpPoints(const Arc& arc, Rng_t&& ts);
 double RadiusSq(const Arc&);
-double SegmentDistanceToPoint(const Arc& arc, const glm::dvec2& p);
-double SdfFromArcList(const std::vector<Endpoint>& endpoints, const glm::dvec2& p_center);
 std::array<glm::dvec2, 2> Tangents(const Arc&);
 bool WedgeContainsPoint(const Arc&, const glm::dvec2&);
 
@@ -100,8 +105,39 @@ glm::dvec2 Center(const Arc& arc) {
  */
 Arc CreateArc(const glm::dvec2 &p0, const glm::dvec2 &p1, const glm::dvec2 &pm) {
     // If the midpoint is equal to at least one of the endpoints then mark as line (or point if all three are equal).
-    if (glm::all(glm::equal(p0, pm)) || glm::all(glm::equal(p1, pm))) { return {.p0=p0, .p1=p1, .d=0}; }
+    if (glm::all(glm::equal(p0, pm)) || glm::all(glm::equal(p1, pm))) { return {.p0=p0, .p1=p1, .d=0.0}; }
 
+    const glm::dvec2 pm0 = p0 - pm;
+    const glm::dvec2 pm1 = p1 - pm;
+    const glm::dvec2 upm0 = glm::normalize(pm0);
+    const glm::dvec2 upm1 = glm::normalize(pm1);
+    const double cos_theta = glm::dot(upm0, upm1);
+    if (cos_theta < glm::cos(glm::pi<glm::f64>() - ONE_DEGREE)) {
+        // If the angle is too great; i.e. approaching equal but opposite then consider it a line.
+        return {.p0=p0, .p1=p1, .d=0.0};
+    }
+    if (cos_theta > -std::numeric_limits<double>::epsilon()) {
+        // Only handle arcs for angles greater than pi/2; (theta < pi/2) -> semi-circle to full circle.
+        // Assumes that the caller should break up the arc into smaller units and call again if desired.
+        return {.p0=p0, .p1=p1, .d=std::numeric_limits<double>::infinity()};
+    }
+
+    const double inscribed_theta = glm::acos(cos_theta);
+    //const double central_theta = 2.0 * inscribed_theta;
+    //const double alpha = glm::two_pi<glm::f64>() - central_theta;
+
+    const glm::dvec2 p01 = p1 - p0;
+    const glm::dvec2 up01 = glm::normalize(p01);
+    const glm::dvec2 up0m = -upm0;
+    const double sin_theta = Cross(up01, up0m);
+    const bool is_pm_left = sin_theta >= 0.0;
+
+    double beta = beta = inscribed_theta - glm::half_pi<glm::f64>();
+    if (is_pm_left) { beta *= -1.0; } // center is to the right; p0 -> p1 is clockwise
+    return {.p0=p0, .p1=p1, .d=glm::tan(beta / 2.0)};
+
+
+#if 0
     const glm::dvec2 pm0 = p0 - pm;
     const glm::dvec2 pm1 = p1 - pm;
     const glm::dvec2 upm0 = glm::normalize(pm0);
@@ -125,6 +161,8 @@ Arc CreateArc(const glm::dvec2 &p0, const glm::dvec2 &p1, const glm::dvec2 &pm) 
         if (!is_left) { beta *= -1.0; }
     }
     return {.p0=p0, .p1=p1, .d=glm::tan(beta / 2.0)};
+#endif
+
 
 
     //const glm::dvec2 v = 0.5 * p01;
@@ -191,21 +229,41 @@ Arc CreateArc(const glm::dvec2 &p0, const glm::dvec2 &p1, const glm::dvec2 &pm) 
 }
 
 
-double ExtendedDist(const Arc& arc, const glm::dvec2& p) {
-    glm::dvec2 m = glm::mix(arc.p0, arc.p1, 0.5);
-    glm::dvec2 dp = arc.p1 - arc.p0;
-    glm::dvec2 pp = Ortho(dp);
-    double d2 = tan2atan(arc.d);
-    if (glm::dot(p - m, arc.p1 - m) < 0) {
-        return glm::dot(p - arc.p0, glm::normalize(pp + dp * d2));
-    } else {
-        return glm::dot(p - arc.p1, glm::normalize(pp - dp * d2));
+// Assumes Arc is not a line (arc.d == 0) or invalid (ard.d == infinity)
+template <typename Rng_t>
+requires std::ranges::input_range<Rng_t> && std::same_as<std::ranges::range_value_t<Rng_t>, double>
+std::vector<glm::dvec2> LerpPoints(const Arc& arc, Rng_t&& ts) {
+    std::vector<glm::dvec2> results{};
+    results.reserve(ts.size());
+
+    const glm::dvec2 arc_center = Center(arc);
+    // +beta == counter-clockwise; -beta clockwise
+    // arc.d = tan(beta/2)
+    // tan(-theta) == -tan(theta)
+    const double beta = 2.0 * glm::atan(abs(arc.d));
+    // 2 * (pi/2 - beta) -> pi - 2beta; (pi/2 - beta) is half the angle from p0 to p1 about the center
+
+    const double theta = 2.0 * (glm::half_pi<glm::f32>() - beta);
+
+    // Center the circle at the origin.
+    const double x = arc.p0.x - arc_center.x;
+    const double y = arc.p0.y - arc_center.y;
+
+    // Rotate p0 about the origin
+    for (auto& t : ts) {
+        const double dt = t * theta;
+        const double cos_dt = glm::cos(dt);
+        const double sin_dt = glm::sin(dt);
+        // Shift circle back to arc_center
+        results.push_back(arc_center + glm::dvec2{x * cos_dt - y * sin_dt, x * sin_dt + y * cos_dt});
     }
+
+    return results;
 }
 
 
 double Radius(const Arc& arc) {
-    return glm::distance(arc.p0, Center(arc));
+    return glm::distance(Center(arc), arc.p0);
     // Alternative 1
     // tan(t) == tan(t); tan(-t) == -tan(t)
     // sign on d will propagate out to reverse the perpendicular vector clockwise if negative.
@@ -224,84 +282,6 @@ double RadiusSq(const Arc& arc) {
     glm::dvec2 v = (arc.p1 - arc.p0) / 2.0;
     glm::dvec2 w = v + Ortho(v) * tan2atan(arc.d);
     return glm::dot(w, w);
-}
-
-
-double SegmentDistanceToPoint(const Arc& arc, const glm::dvec2& p) {
-    const glm::dvec2& p0 = arc.p0;
-    const glm::dvec2& p1 = arc.p1;
-    if (p0 == p1) { return 0.0; }
-
-    glm::dvec2 normal = Ortho(p1 - p0);
-    double c = glm::dot(normal, p0);
-
-    // shortest vector from point to line
-    double mag = -(glm::dot(normal, p) - c) / glm::length(normal);
-    glm::dvec2 z = glm::normalize(normal) * mag + p;
-    // Check if z is between p0 and p1.
-    bool does_contain = (glm::abs(p1.y - p0.y) > glm::abs(p1.x - p0.x)) ?
-        ((z.y - p0.y > 0 && p1.y - p0.y > z.y - p0.y) || (z.y - p0.y < 0 && p1.y - p0.y < z.y - p0.y)) :
-        ((0 < z.x - p0.x && z.x - p0.x < p1.x - p0.x) || (0 > z.x - p0.x && z.x - p0.x > p1.x - p0.x));
-    if (does_contain) { return mag; }
-
-    double dist_p_p0 = glm::distance(p, p0);
-    double dist_p_p1 = glm::distance(p, p1);
-    return std::ranges::min(dist_p_p0, dist_p_p1) * (-(glm::dot(normal, p) - c) < 0 ? -1 : 1);
-}
-
-
-double SdfFromArcList(const std::vector<Endpoint>& endpoints, const glm::dvec2& target, const double epsilon) {
-    if (endpoints.empty()) { return 1.0; }
-
-    glm::dvec2 p_prev = endpoints[0].p;
-    Arc closest_arc{.p0=p_prev, .p1=p_prev, .d=0.0};
-
-    double min_dist = std::numeric_limits<double>::infinity();
-    int side = 0;
-    for (const auto& endpoint : endpoints) {
-        Arc arc{.p0=p_prev, .p1=endpoint.p, .d=endpoint.d};
-        p_prev = endpoint.p;
-        if (!std::isfinite(endpoint.d)) { continue; }
-
-        if (glm::abs(arc.d) < epsilon) { return SegmentDistanceToPoint(arc, target); }
-        if (WedgeContainsPoint(arc, target)) {
-            glm::dvec2 center = Center(arc);
-            double dist = glm::distance(Center(arc), target);
-            double radius = glm::distance(center, arc.p0);
-            double delta = dist - radius;
-            double udist = glm::abs(delta);// * (1.0 - epsilon);
-            if (udist <= min_dist) {
-                min_dist = udist;
-                side = delta >= 0 ? -1 : +1; // Swap; outside becomes negative
-            }
-        } else {
-            double udist = std::ranges::min(glm::distance(target, arc.p0), glm::distance(target, arc.p1));
-            if (udist < min_dist) {
-                min_dist = udist;
-                side = 0; /* unsure */
-                closest_arc = arc;
-            } else if (side == 0 && udist == min_dist) {
-                /* If this new distance is the same as the current minimum,
-                * compare extended distances.  Take the sign from the arc
-                * with larger extended distance. */
-                double old_ext_dist = ExtendedDist(closest_arc, target);
-                double new_ext_dist = ExtendedDist(arc, target);
-                double ext_dist = glm::abs(new_ext_dist) <= glm::abs(old_ext_dist) ? old_ext_dist : new_ext_dist;
-
-                /* For emboldening and stuff: */
-                // min_dist = fabs (ext_dist);
-                side = ext_dist >= 0 ? +1 : -1;
-            }
-        }
-    }
-
-    if (side == 0) {
-        // Technically speaking this should not happen, but it does.  So try to fix it.
-        double ext_dist = ExtendedDist(closest_arc, target);
-        side = ext_dist >= 0 ? +1 : -1;
-    }
-
-    return side * min_dist;
 }
 
 

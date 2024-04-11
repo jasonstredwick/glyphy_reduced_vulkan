@@ -213,6 +213,14 @@ class ApproximatorSpringSystem {
                 total += k_inv;
                 error[i] = k_inv;
             }
+
+            t[0] = 0.0;
+            for (size_t i : std::views::iota(static_cast<size_t>(1), t.size())) {
+                t[i] = t[i - 1] + (error[i - 1] / total) + (2.0 * std::numeric_limits<double>::epsilon());
+            }
+            std::ranges::for_each(t, [max_t=t.back()](auto& v) { v /= max_t; });
+            t[N] = 1.0; // Do this to get real 1.0, not .9999999999999998!
+
             for (size_t i = 0; i < N; i++) {
                 double k_inv = error[i];
                 // Need to ensure minimum segment length in order to avoid NaNs.

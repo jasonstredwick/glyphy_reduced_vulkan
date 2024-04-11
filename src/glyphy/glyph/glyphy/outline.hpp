@@ -234,7 +234,11 @@ bool ProcessContour(std::vector<Endpoint>& endpoints, size_t subset_start, size_
 void Reverse(std::span<Endpoint>& endpoints) {
     if (endpoints.empty()) { return; }
 
-    // shift d's first  ... why?
+    // shift d's first  ... perform rotate left with negation (except don't negate infinity)
+    // reverse endpoints
+    // This process is required because of the association of d with each pair; i.e. A->B d is associated with B.
+    // After this process it is switched to B->A so d needs to be shifted for each endpoint and the negation is
+    // required to manage orientation for switching the direction of rotation from A->B to to B->A.
     double d0 = endpoints[0].d;
     for (size_t i=0; i<endpoints.size(); ++i) {
         double d1 = endpoints[i + 1].d;

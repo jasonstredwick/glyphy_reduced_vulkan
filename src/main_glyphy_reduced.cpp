@@ -25,7 +25,9 @@ int main(int argc, char** argv) {
         glyphy::Atlas<glyphy::AtlasDataUnit, glyphy::MAX_ATLAS_ID> atlas{atlas_chunk_size, atlas_initial_reserve};
         glyphy::GlyphCache glyph_cache{fontface, atlas, glyphy::ExtractGlyph, glyphy::UpdateAtlasInfo};
 
-        std::string_view text{"REDUCED: Hi my name is Jason.\nREDUCED: Line 2.\nREDUCED: Is this line 3?"};
+        //std::string_view text{"C"};
+        std::string_view text{
+            "abcdefghijklmnopqrstuvwxyz\nABCDEFGHIJKLMNOPQRSTUVWXYZ\n0123456789!@#$%^&*()-=_+[]\\{}|;':\",./<>?"};
         glyphy::Buffer text_buffer{};
         text_buffer.MoveTo({0.0, 0.0});
         glyphy::shader::TextVertexData text_vertex_data = text_buffer.AddText(text, glyph_cache, 14);

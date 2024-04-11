@@ -139,10 +139,10 @@ glyphy::shader::TextVertexData Buffer::AddText(const std::string_view& text,
                 index += 4;
             }
 
-            const auto harfbuzz_advance = glm::dvec2{
+            const auto harfbuzz_advance = em_scale * glm::dvec2{
                 static_cast<double>(pos.x_advance),
                 static_cast<double>(pos.y_advance)
-            } * em_scale;
+            };
             cursor.x += harfbuzz_advance.x * font_size;
         }
 

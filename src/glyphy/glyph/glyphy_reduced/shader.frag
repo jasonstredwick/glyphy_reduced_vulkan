@@ -25,68 +25,100 @@ layout(location=0) out vec4 outColor;
 #define GLYPHY_MAX_NUM_ENDPOINTS 32
 #define GLYPHY_INFINITY 1e9
 #define GLYPHY_EPSILON  1e-5
-#define GLYPHY_SQRT2_2 0.70710678118654757 // 1 / sqrt(2)
+#define GLYPHY_SQRT2_2 0.70710678118654757 // sqrt(2) / 2
+#define HALF_PI = 1.5707964;
+#define PI = 3.1415927
 
 
 float Cross(const vec2 lhs, const vec2 rhs) { return lhs.x * rhs.y - lhs.y * rhs.x; }
 vec2 Ortho(const vec2 v) { return vec2(-v.y, v.x); }
 bool IsInf(const float v) { return abs(v) >= GLYPHY_INFINITY * 0.5; }
 bool IsZero(const float v) { return abs(v) <= GLYPHY_EPSILON * 2.0; }
-float tan2atan(float d)  { return 2.0 * d / (1.0 - d*d); }     /* returns tan(2 * atan(d)) */
+// half angle formula
+float cos2atan(const float d) { return (1.0 - d*d) / (1.0 + d*d); } // returns cos(2 * atan(d))
+float sin2atan(const float d) { return 2.0 * d / (1.0 + d*d); }     // returns sin(2 * atan(d))
+float tan2atan(const float d) { return 2.0 * d / (1.0 - d*d); }     // returns tan(2 * atan(d))
+// trig/inverse trig relationships (squared values)
+float cosatan_sq(const float d) { return 1.0 / (1.0 + d*d); } // non-squared: 1 / sqrt(1 + d*d)
+float sinatan_sq(const float d) { return d*d / (1.0 + d*d); } // non-squared: d / sqrt(1 + d*d)
+float tanatan_sq(const float d) { return d*d; } // non-squared: d
 
 
-float DistanceToLine(const vec2 p0, const vec2 p1, const vec2 target) {
+vec2 Midpoint(const vec2 a, const vec2 b) { return (a + b) / 2.0; }
+vec2 Center(const vec2 p0, const vec2 p1, const float d) {
+    // tan(t) == tan(t); tan(-t) == -tan(t)
+    // sign on d will propagate out to reverse the perpendicular vector clockwise if negative.
+    vec2 pm = Midpoint(p0, p1);
+    return pm + Ortho(pm - p0) * tan2atan(d);
+}
+
+
+// Returns the shortest distance squared and updated side value for the target to the segment.
+float DistanceSqToSegment(const vec2 v_01, const vec2 v_0p) {
     // https://iquilezles.org/articles/distfunctions2d/
-    vec2 v01 = p1 - p0;
-    vec2 v0t = target - p0;
-    float h = dot(v01, v0t) / dot(v01, v01);
-    float is_inside = float(h >= 0 && h <= 1.0);
-    return is_inside * length(v0t - v01 * h) + (1.0 - is_inside) * GLYPHY_INFINITY;
+    // See sdPolygon and sdSegment
+    vec2 v_target = v_0p - v_01 * clamp(dot(v_0p, v_01) / dot(v_01, v_01), 0.0, 1.0);
+    return dot(v_target, v_target);
 }
 
 
 float DistanceToArc(const vec2 p0, const vec2 p1, float d, const vec2 target) {
     // tan(t) == tan(t); tan(-t) == -tan(t)
     // sign on d will propagate out to reverse the perpendicular vector clockwise if negative.
-    vec2 v = (p1 - p0) * 0.5;
-    vec2 vp = Ortho(v) * tan2atan(d);
-    vec2 center = p0 + v + vp;
-
-    vec2 vc0 = p0 - center;
-    vec2 vct = target - center;
-    float dist = abs(length(vct) - length(vc0));
-
-    float is_inside = float(dot(vc0, -vp) <= dot(vct, -vp));
-    return is_inside * dist + (1.0 - is_inside) * GLYPHY_INFINITY;
+    float tan_beta = tan2atan(d);
+    vec2 pm = Midpoint(p0, p1);
+    vec2 v_mc = Ortho(pm - p0) * tan_beta;
+    vec2 center = pm + v_mc;
+    vec2 v_ct = target - center;
+    vec2 v_c0 = p0 - center;
+    float radius_sq = dot(v_c0, v_c0);
+    float t_dist_sq = dot(v_ct, v_ct);
+    if (dot(target - p0, (p1 - p0) * mat2(1,  tan_beta, -tan_beta, 1)) >= 0.0 &&
+	    dot(target - p1, (p1 - p0) * mat2(1, -tan_beta,  tan_beta, 1)) <= 0.0) {
+        return t_dist_sq + radius_sq - 2.0 * sqrt(t_dist_sq * radius_sq);
+    }
+    return GLYPHY_INFINITY;
 }
 
 
-float SDF(int endpoint_start_index, int num_endpoints, float start_side, vec2 target) {
-    float min_dist = GLYPHY_INFINITY;
+float SDF(const int start_index, const int num_endpoints, const vec2 target) {
+    float dist_sq = GLYPHY_INFINITY;
+    float side = 1.0;
 
-    Endpoint_t endpoint = endpoints[endpoint_start_index];
-    vec2 prev_p = endpoint.p;
-    for (int i=1; i<num_endpoints; ++i, prev_p=endpoint.p) {
-        endpoint = endpoints[endpoint_start_index + i];
-        if (IsInf(endpoint.d)) { continue; }
+    int i = start_index;
+    int j = i + 1;
+    int N = start_index + num_endpoints;
+    for (; j<N; ++i, ++j) {
+        if (IsInf(endpoints[j].d)) { continue; }
 
+        vec2 p0 = endpoints[i].p;
+        vec2 p1 = endpoints[j].p;
+        float d = endpoints[j].d;
+
+        vec2 v_01 = p1 - p0;
+        vec2 v_0p = target - p0;
+
+        // Winding number test; using a horizontal line through target determine the number of crossings
+        // only looking at those segments that cross the line.  Crossing is affected by the direction of the crossing
+        // and utilizes a boolean test of cross product to get the sign rather than computing the actual cross
+        // product.
+        bvec3 cond = bvec3(p0.y <= target.y, target.y < p1.y, v_01.x * v_0p.y > v_01.y * v_0p.x);
+        if (all(cond) || all(not(cond))) { side = -side; }
+
+        // line
         float value = GLYPHY_INFINITY;
-        if (IsZero(endpoint.d)) {
-            value = DistanceToLine(prev_p, endpoint.p, target);
+        if (d == 0) {
+            value = DistanceSqToSegment(v_01, v_0p);
         } else {
-            value = DistanceToArc(prev_p, endpoint.p, endpoint.d, target);
+            value = DistanceToArc(p0, p1, d, target);
         }
-        float is_less = float(value < min_dist);
-        min_dist = is_less * value + (1.0 - is_less) * min_dist;
+        dist_sq = min(dist_sq, value);
     }
 
-    return min_dist;
+    return side * sqrt(dist_sq);
 }
 
 
-/***
- * main
- */
 void main() {
     /* isotropic antialiasing */
     vec2 dpdx = dFdx(uv);
@@ -99,147 +131,24 @@ void main() {
     float u_boldness = gsb_vals[3];
     bool u_outline = u_outline_thickness < 0.0;
 
-    int endpoint_start_index = int(atlas_info[0]);
-    int num_endpoints = int(atlas_info[1]);
-    float start_side = atlas_info[2];
-    float gsdist = SDF(endpoint_start_index, num_endpoints, start_side, uv);
+    int endpoint_start_index = int(atlas_info[0] + 0.5); // not certain why I need the +0.5; why not exact?
+    int num_endpoints = int(atlas_info[1] + 0.5);  // not certain why I need the -0.5; why not exact?
+
+    float gsdist = SDF(endpoint_start_index, num_endpoints, uv);
+    //if (abs(gsdist) > 0.01) { discard; }
+    //outColor = vec4(1, 1, 1, 1);
+
+#if 1
     gsdist -= u_boldness;
     float sdist = gsdist / mag * u_contrast;
 
     vec4 color = vec4(1, 1, 1, 1);
     if (u_outline) { sdist = abs(sdist) - u_outline_thickness * 0.5; }
-    if (sdist > 1.0f) { discard; }
+    if (sdist > 0) { discard; }
     float alpha = smoothstep(-0.75, +0.75, -sdist);
     if (u_gamma_adjust != 1.0f) { alpha = pow(alpha, 1.0 / u_gamma_adjust); }
     color = vec4(color.rgb, color.a * alpha);
-    //color = vec4(vec3(1.0 * float(ee.p.x >= 0.155762 && ee.p.x < 0.155762), 0, 0), 1);
-    //color = vec4(vec3(float(endpoint_start_index) / float(num_endpoints) , 0, 0), 1);
 
-
-    //Endpoint_t ee = endpoints[13];
-    //color = vec4(vec3(ee.p.x, ee.p.y, ee.d), 1);
-    //if (gsdist > 0) {// discard; }
-    //if (gsdist < 0.015) {
-    //    color = vec4(1.0, 1.0, 1.0, 1.0);
-    //} else {
-        //color = vec4(1.0, 0.0, 0.0, 1.0);
-    //    discard;
-    //}
-
-    //color = vec4(vec3(1.0f) * (color.a * alpha), 1.0f);
-    //vec4 rgba = texture(u_atlas_tex, glyph_info.position);
-    //vec3 x = vec3(0.0f);
-    //if (isnan(sdist)) { x = vec3(1.0f); }
-    //color = vec4(x, 1.0f);
-    //color = vec4(rgba.xyz, 1.0f);//vec4(x, 1.0f);
     outColor = color;
-}
-
-
-
-
-
-#if 0
-float Cross(const vec2 lhs, const vec2 rhs) { return lhs.x * rhs.y - lhs.y * rhs.x; }
-vec2 Midpoint(const vec2 a, const vec2 b) { return (a + b) / 2.0; }
-vec2 OrthoC(const vec2 v) { return {v.y, -v.x}; }
-float cos2atan(float d) { return (1.0 - d*d) / (1.0 + d*d); } /* returns cos(2 * atan(d)) */
-float sin2atan(float d) { return 2.0 * d / (1.0 + d*d); }     /* returns sin(2 * atan(d)) */
-
-
-vec2 Center(const vec2 p0, const vec2 p1, float d) {
-    vec2 pm = Midpoint()
-    return pm + Ortho(pm - p0) * tan2atan(d);
-}
-
-
-bool Glyphy_ArcWedgeContains(const Arc_t a, const vec2 p) {
-    float d2 = Glyphy_Tan2Atan(a.d);
-    return dot(p - a.p0, (a.p1 - a.p0) * mat2(1,  d2, -d2, 1)) >= 0.0 &&
-           dot(p - a.p1, (a.p1 - a.p0) * mat2(1, -d2,  d2, 1)) <= 0.0;
-}
-
-
-float Glyphy_ArcWedgeSignedDistShallow(const Arc_t a, const vec2 p) {
-    vec2 v = normalize(a.p1 - a.p0);
-    float line_d = dot(p - a.p0, Glyphy_Ortho(v));
-    if (a.d == 0.0) { return line_d; }
-
-    float d0 = dot((p - a.p0), v);
-    if (d0 < 0.0) { return sign(line_d) * distance(p, a.p0); }
-    float d1 = dot((a.p1 - p), v);
-    if (d1 < 0.0) { return sign(line_d) * distance(p, a.p1); }
-    float r = 2.0 * a.d * (d0 * d1) / (d0 + d1);
-    if (r * line_d > 0.0) { return sign(line_d) * min(abs(line_d + r), min(distance(p, a.p0), distance(p, a.p1))); }
-    return line_d + r;
-}
-
-
-float Glyphy_ArcWedgeSignedDist(const Arc_t a, const vec2 p) {
-    if (abs(a.d) <= 0.03) { return Glyphy_ArcWedgeSignedDistShallow(a, p); }
-    vec2 c = Glyphy_ArcCenter(a);
-    return sign(a.d) * (distance(a.p0, c) - distance(p, c));
-}
-
-
-float Glyphy_ArcExtendedDist(const Arc_t a, const vec2 p) {
-    /* Note: this doesn't handle points inside the wedge. */
-    vec2 m = mix(a.p0, a.p1, .5);
-    float d2 = Glyphy_Tan2Atan(a.d);
-    if (dot(p - m, a.p1 - m) < 0.0) { return dot(p - a.p0, normalize((a.p1 - a.p0) * mat2(+d2, -1, +1, +d2))); }
-    else                            { return dot(p - a.p1, normalize((a.p1 - a.p0) * mat2(-d2, -1, +1, -d2))); }
-}
-
-
-float Glyphy_SDF(int endpoint_start_index, int num_endpoints, float start_side, vec2 target) {
-    float side = start_side;
-    float min_dist = GLYPHY_INFINITY;
-    Arc_t closest_arc;
-
-    Endpoint_t endpoint = endpoints[endpoint_start_index];
-    vec2 prev_endpoint = endpoint.p;
-    for (int i = 1; i < num_endpoints; i++) {
-        endpoint = endpoints[endpoint_start_index + i];
-        Arc_t a = Arc_t(prev_endpoint, endpoint.p, endpoint.d);
-        prev_endpoint = endpoint.p;
-        if (IsInf(a.d)) { continue; }
-
-        if (Glyphy_ArcWedgeContains(a, target)) {
-            float sdist = Glyphy_ArcWedgeSignedDist(a, target);
-            float udist = abs(sdist) * (1.0 - GLYPHY_EPSILON);
-            if (udist <= min_dist) {
-                min_dist = udist;
-                side = sdist <= 0.0 ? -1.0 : +1.0;
-            }
-        } else {
-            float udist = min(distance(target, a.p0), distance(target, a.p1));
-            if (udist < min_dist - GLYPHY_EPSILON) {
-            min_dist = udist;
-            side = 0.0; /* unsure */
-            closest_arc = a;
-            } else if (side == 0.0 && udist - min_dist <= GLYPHY_EPSILON) {
-            /* If this new distance is the same as the current minimum,
-            * compare extended distances.  Take the sign from the arc
-            * with larger extended distance. */
-            float old_ext_dist = Glyphy_ArcExtendedDist(closest_arc, target);
-            float new_ext_dist = Glyphy_ArcExtendedDist(a, target);
-            float ext_dist = abs(new_ext_dist) <= abs(old_ext_dist) ? old_ext_dist : new_ext_dist;
-
-#ifdef GLYPHY_SDF_PSEUDO_DISTANCE
-            /* For emboldening and stuff: */
-            min_dist = abs(ext_dist);
 #endif
-            side = sign(ext_dist);
-            }
-        }
-    }
-
-    if (side == 0.0) {
-        // Technically speaking this should not happen, but it does.  So try to fix it.
-        float ext_dist = Glyphy_ArcExtendedDist(closest_arc, target);
-        side = sign(ext_dist);
-    }
-
-    return min_dist * side;
 }
-#endif

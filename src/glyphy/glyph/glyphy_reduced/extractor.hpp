@@ -20,7 +20,8 @@
 namespace glyphy {
 
 
-constexpr const double DEFAULT_EXTRACT_TOLERANCE = 0.5; // 1.0 / 2048.0; // 5e-4
+constexpr const double DEFAULT_EXTRACT_TOLERANCE = 0.5;//5e-4; //0.5; // 1.0 / 2048.0; // 5e-4
+constexpr const size_t DEFAULT_MAX_SEGMENTS = 100;
 
 
 /***
@@ -29,12 +30,16 @@ constexpr const double DEFAULT_EXTRACT_TOLERANCE = 0.5; // 1.0 / 2048.0; // 5e-4
  * within a vector.
  */
 struct GlyphExtractor : public glyphy::harfbuzz::GlyphExtractor {
+    struct Options {
+        double tolerance{DEFAULT_EXTRACT_TOLERANCE};
+        size_t max_segments{DEFAULT_MAX_SEGMENTS};
+    };
+
     std::vector<Endpoint> endpoints{};
-    double tolerance{DEFAULT_EXTRACT_TOLERANCE};
-    double max_error{0};
+    Options options{};
 
     GlyphExtractor() noexcept = default;
-    GlyphExtractor(const double tolerance) noexcept : tolerance{tolerance} {}
+    GlyphExtractor(const Options& options) noexcept : options{options} {}
 
     void Accumulate(const glm::dvec2& p, double d) {
         if (IsCurrent(p)) { return; }
@@ -54,21 +59,21 @@ struct GlyphExtractor : public glyphy::harfbuzz::GlyphExtractor {
     }
 
     void ExtendFromBezier(const glm::dvec2& p0, const glm::dvec2& p1, const glm::dvec2& p2, const glm::dvec2& p3) override {
-        using Approximator = ApproximatorMidpointTwoPart<ErrorApproximatorDefault>;
-        using ApproximatorSpringSystem = ApproximatorSpringSystem<Approximator>;
-        double error = 0;
-        Approximator appx{};
-        Bezier bezier{p0, p1, p2, p3};
-        std::vector<Arc> arcs = ApproximatorSpringSystem::ApproximateBezierWithArcs(bezier, appx, tolerance, error);
-        max_error = glm::max(max_error, error);
-        MoveToExec(bezier.p0);
+        //using Approximator = ApproximatorMidpointTwoPart<ErrorApproximatorDefault>;
+        using Approximator = ApproximatorMidpointSimple<ErrorApproximatorJMS>;
+        using System = ApproximatorSpringSystem<Approximator>;
+        std::vector<Arc> arcs = System::ApproximateBezierWithArcs(Bezier{p0, p1, p2, p3},
+                                                                  Approximator{},
+                                                                  options.tolerance,
+                                                                  options.max_segments);
+        MoveToExec(p0);
         for (const auto& arc : arcs) { Accumulate(arc.p1, arc.d); }
     }
 
-    void ExtendLine(const glm::dvec2& p) override { Accumulate(p, 0); }
+    void ExtendLine(const glm::dvec2& p) override { Accumulate(p, 0.0); }
 
     void MoveToExec(const glm::dvec2& p) override {
-        if (!endpoints.size() || !IsCurrent(p)) {
+        if (endpoints.empty() || !IsCurrent(p)) {
             Accumulate(p, std::numeric_limits<double>::infinity());
         }
     }

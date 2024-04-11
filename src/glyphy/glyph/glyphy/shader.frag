@@ -197,8 +197,8 @@ void main() {
   float u_boldness = gsb_vals[3];
   bool u_outline = u_outline_thickness <= 0.0;
 
-  int endpoint_start_index = int(atlas_info[0]);
-  int num_endpoints = int(atlas_info[1]);
+  int endpoint_start_index = int(atlas_info[0] + 0.5);
+  int num_endpoints = int(atlas_info[1] + 0.5);
   float start_side = atlas_info[2];
   float gsdist = SDF(endpoint_start_index, num_endpoints, start_side, uv);
   gsdist -= u_boldness;

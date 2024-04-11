@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
+#include <print>
 #include <ranges>
 #include <span>
 #include <vector>
@@ -32,266 +33,160 @@
 
 #include "glyphy/glm.hpp"
 
+#include "glyphy/extents.hpp"
 #include "glyphy/glyph/glyphy_reduced/arc.hpp"
 #include "glyphy/glyph/glyphy_reduced/endpoint.hpp"
 #include "glyphy/math.hpp"
 
 
-namespace glyphy::outline {
+namespace glyphy {
 
 
+using Path_t = std::span<Endpoint>;
+
+
+constexpr const double EPSILON_f = static_cast<double>(std::numeric_limits<float>::epsilon());
 constexpr const double EPSILON = 1e-9; // integer portion ranges [0, 2^14]
-bool IsZero(const double d) { return glm::abs(d) < EPSILON; }
-bool IsZero(const glm::dvec2& v) { return IsZero(v.x) && IsZero(v.y); }
-bool IsEqual(const auto& lhs, const auto& rhs) { return IsZero(lhs - rhs); }
+constexpr bool IsZero(const double d) { return glm::abs(d) < EPSILON_f; }
+constexpr bool IsZero(const glm::dvec2& v) { return IsZero(v.x) && IsZero(v.y); }
+constexpr bool IsEqual(const auto& lhs, const auto& rhs) { return IsZero(lhs - rhs); }
+constexpr bool IsLessThanZero(const double d) { return d <= -EPSILON_f; }
+constexpr bool IsLessThanEqualToZero(const double d) { return d < EPSILON_f; }
+constexpr bool IsGreaterThanZero(const double d) { return d >= EPSILON_f; }
+constexpr bool IsGreaterThanEqualToZero(const double d) { return d > -EPSILON_f; }
 
 
-#if 0
-void UpdateWindingFromEvenOdd(std::vector<Endpoint>& endpoints, bool inverse);
+void AdjustWinding(std::span<Endpoint> endpoints);
+std::vector<Path_t> ConvertEndpointsToPaths(std::span<Endpoint> endpoints);
+std::vector<size_t> FindPaths(std::span<const Endpoint> endpoints);
+bool PathWindingNeedsReverse(const std::vector<Path_t>& paths,
+                             const size_t test_path_index,
+                             const size_t test_endpoint_index,
+                             const double max_len);
+void ReverseWinding(Path_t path);
 
-void UpdateWindingFromEvenOdd(std::vector<Endpoint>& endpoints, bool inverse) {
+
+void AdjustWinding(std::span<Endpoint> endpoints) {
+    auto paths = ConvertEndpointsToPaths(endpoints);
+
+    Extents extents{};
+    std::ranges::for_each(endpoints, [&extents](auto& e) { extents.Add(e.p); });
+    const double max_len = 2.0 * glm::distance(glm::dvec2{extents.min_x, extents.min_y},
+                                               glm::dvec2{extents.max_x, extents.max_y});
+
+    size_t need_update = 0;
+    for (auto [path_index, path] : paths | std::views::enumerate) {
+        const size_t test_endpoint_index = 0;
+        if (PathWindingNeedsReverse(paths, path_index, test_endpoint_index, max_len)) {
+            need_update++;
+            ReverseWinding(path);
+        }
+    }
 }
 
 
-
-
-#else
-
-bool EvenOdd(const std::vector<Endpoint>& endpoints, size_t subset_start, size_t subset_total);
-bool ProcessContour(std::vector<Endpoint>& endpoints, size_t subset_start, size_t subset_total, bool inverse);
-void Reverse(std::span<Endpoint>& endpoints);
-bool Winding(const std::span<const Endpoint>& endpoints);
-bool WindingFromEvenOdd(std::vector<Endpoint>& endpoints, bool inverse);
-
-
-double Categorize(double v, double ref) {
-    return v < ref - EPSILON ? -1.0 : v > ref + EPSILON ? 1.0 : 0.0;
+std::vector<Path_t> ConvertEndpointsToPaths(std::span<Endpoint> endpoints) {
+    std::vector<Path_t> paths{};
+    auto start_it = endpoints.begin();
+    while (start_it != endpoints.end()) {
+        auto it = std::ranges::find_if(std::next(start_it), endpoints.end(), [](auto& e) {
+            return !std::isfinite(e.d);
+        });
+        paths.push_back({start_it, it});
+        start_it = it;
+    }
+    return paths;
 }
 
 
-bool EvenOdd(const std::vector<Endpoint>& endpoints, size_t subset_start, size_t subset_total) {
-    /***
-      * Algorithm:
-      *
-      * - For a point on the contour, draw a halfline in a direction
-      *   (eg. decreasing x) to infinity,
-      * - Count how many times it crosses all other contours,
-      * - Pay special attention to points falling exactly on the halfline,
-      *   specifically, they count as +.5 or -.5, depending the direction
-      *   of crossing.
-      *
-      * All this counting is extremely tricky:
-      *
-      * - Floating point equality cannot be relied on here,
-      * - Lots of arc analysis needed,
-      * - Without having a point that we know falls /inside/ the contour,
-      *   there are legitimate cases that we simply cannot handle using
-      *   this algorithm.  For example, imagine the following glyph shape:
-      *
-      *         +---------+
-      *         | +-----+ |
-      *         |  \   /  |
-      *         |   \ /   |
-      *         +----o----+
-      *
-      *   If the glyph is defined as two outlines, and when analysing the
-      *   inner outline we happen to pick the point denoted by 'o' for
-      *   analysis, there simply is no way to differentiate this case from
-      *   the following case:
-      *
-      *         +---------+
-      *         |         |
-      *         |         |
-      *         |         |
-      *         +----o----+
-      *             / \
-      *            /   \
-      *           +-----+
-      *
-      *   However, in one, the triangle should be filled in, and in the other
-      *   filled out.
-      *
-      *   One way to work around this may be to do the analysis for all endpoints
-      *   on the outline and take majority.  But even that can fail in more
-      *   extreme yet legitimate cases, such as this one:
-      *
-      *           +--+--+
-      *           | / \ |
-      *           |/   \|
-      *           +     +
-      *           |\   /|
-      *           | \ / |
-      *           +--o--+
-      *
-      *   The only correct algorithm I can think of requires a point that falls
-      *   fully inside the outline.  While we can try finding such a point (not
-      *   dissimilar to the winding algorithm), it's beyond what I'm willing to
-      *   implement right now.
-      */
+std::vector<size_t> FindPaths(std::span<const Endpoint> endpoints) {
+    std::vector<size_t> paths_start_index{};
+    auto Filter_f = [](const auto& tup) { return !std::isfinite(std::get<1>(tup).d); };
+    std::ranges::transform(endpoints | std::views::enumerate | std::views::filter(Filter_f),
+                           std::back_inserter(paths_start_index),
+                           [](const auto& tup) { return static_cast<size_t>(std::get<0>(tup)); });
+    paths_start_index.push_back(endpoints.size());
+    return paths_start_index;
+}
 
-    const glm::dvec2 ps0 = endpoints[subset_start].p;
 
-    double count = 0;
-    glm::dvec2 p0{0, 0};
-    // TODO: convert to take + drop + join views and iterator over endpoints
-    for (size_t index=0; index < endpoints.size(); ++index) {
-        const Endpoint& endpoint = endpoints[index];
-        if (glm::isinf(endpoint.d)) { p0 = endpoint.p; continue; }
-        Arc arc{.p0=p0, .p1=endpoint.p, .d=endpoint.d};
-        p0 = endpoint.p;
+bool PathWindingNeedsReverse(const std::vector<Path_t>& paths,
+                             const size_t test_path_index,
+                             const size_t test_endpoint_index,
+                             const double max_len) {
+    // change to .at once support for c++26 std::span::at is available
+    const glm::dvec2 test_p0 = paths.at(test_path_index)[test_endpoint_index].p;
+    const glm::dvec2 test_p1 = paths.at(test_path_index)[test_endpoint_index + 1].p;
+    const glm::dvec2 p0 = Midpoint(test_p0, test_p1);
+    const glm::dvec2 uv01 = glm::normalize(Ortho(test_p1 - test_p0)); // rotate counter-clockwise; i.e. left
+    const glm::dvec2 p1 = p0 + (uv01 * max_len);
 
-        // Skip our own contour
-        if (index >= subset_start && index < subset_start + subset_total) { continue; }
+    double hits = 0.0;
+    // can eventually replace nested for loops with std::generator
+    for (auto [path_index, path] : paths | std::views::enumerate) {
+        for (auto [endpoint_index, endpoint_pair] : path | std::views::pairwise | std::views::enumerate) {
+            if (path_index == test_path_index && endpoint_index == test_endpoint_index) { continue; }
 
-        // End-point y's compared to the ref point; lt, eq, or gt
-        double s0 = Categorize(arc.p0.y, ps0.y);
-        double s1 = Categorize(arc.p1.y, ps0.y);
+            const glm::dvec2 p2 = std::get<0>(endpoint_pair).p;
+            const glm::dvec2 p3 = std::get<1>(endpoint_pair).p;
+            const glm::dvec2 uv23 = glm::normalize(p3 - p2);
 
-        if (IsZero(arc.d)) { // Line
-            if (!s0 || !s1) { //IsZero(s0) || IsZero(s1)) {
-                // Add +.5 / -.5 for each endpoint on the halfline, depending on crossing direction.
-                std::array<glm::dvec2, 2> tangents = Tangents(arc);
-                if (!s0 && arc.p0.x < ps0.x + EPSILON) { count += 0.5 * Categorize(tangents[0].y, 0); }
-                if (!s1 && arc.p1.x < ps0.x + EPSILON) { count += 0.5 * Categorize(tangents[1].y, 0); }
+            // Ignore parallel segments; let the endpoints from connected segments be counted instead.
+            if (IsZero(1.0 - glm::abs(glm::dot(uv01, uv23)))) { continue; }
+
+            // Check segment against test segment
+            const glm::dvec2 uv02 = glm::normalize(p2 - p0);
+            const glm::dvec2 uv03 = glm::normalize(p3 - p0);
+            const double cross0 = Cross(uv01, uv02);
+            const double cross1 = Cross(uv01, uv03);
+            if ((IsLessThanZero(cross0) && IsLessThanZero(cross1)) ||        // both to the right
+                (IsGreaterThanZero(cross0) && IsGreaterThanZero(cross1))) {  // both to the left
                 continue;
             }
 
-            if (s0 == s1) { continue; } //IsZero(s0 - s1)) { continue; } // Segment fully above or below the halfline
-
-            // Find x pos that the line segment would intersect the half-line.
-            double x = arc.p0.x + (arc.p1.x - arc.p0.x) * ((ps0.y - arc.p0.y) / (arc.p1.y - arc.p0.y));
-            if (x >= ps0.x - EPSILON) { continue; } // Does not intersect halfline
-
-            count++; // Add one for full crossing
-            continue;
-        } else { // Arc
-            if (!s0 || !s1) {//IsZero(s0) || IsZero(s1)) {
-                // Add +.5 / -.5 for each endpoint on the halfline, depending on crossing direction.
-                std::array<glm::dvec2, 2> tangents = Tangents(arc);
-
-                // Arc-specific logic: If the tangent has dy==0, use the other endpoint's y value to decide which way
-                // the arc will be heading.
-                if (IsZero(tangents[0].y)) { tangents[0].y = +Categorize(arc.p1.y, ps0.y); }
-                if (IsZero(tangents[1].y)) { tangents[1].y = -Categorize(arc.p0.y, ps0.y); }
-                if (s0 != 0.0 && arc.p0.x < ps0.x + EPSILON) { count += 0.5 * Categorize(tangents[0].y, 0); }
-                if (s1 != 0.0 && arc.p1.x < ps0.x + EPSILON) { count += 0.5 * Categorize(tangents[1].y, 0); }
-                //if (IsZero(s0) && arc.p0.x < ps0.x + EPSILON) { count += 0.5 * Categorize(tangents[0].y, 0); }
-                //if (IsZero(s1) && arc.p1.x < ps0.x + EPSILON) { count += 0.5 * Categorize(tangents[1].y, 0); }
+            if (IsZero(cross0)) { // p2 is on the test segment if in front of p0
+                if (IsGreaterThanEqualToZero(glm::dot(uv01, uv02))) { hits += 0.5; }
+                continue;
+            } else if (IsZero(cross1)) { // p3 is on the test segment if in front of p0
+                if (IsGreaterThanEqualToZero(glm::dot(uv01, uv03))) { hits += 0.5; }
+                continue;
             }
 
-            glm::dvec2 center = Center(arc);
-            double radius = Radius(arc);
-            if (center.x - radius >= ps0.x) { continue; } // No chance
-            // Solve for arc crossing line with y = p.y
-            double dy = ps0.y - center.y;
-            double x2 = radius * radius - dy * dy;
-            if (x2 <= EPSILON) { continue; } // Negative delta, no crossing
-            double dx = glm::sqrt(x2);
-
-            /* There's two candidate points on the arc with the same y as the ref point. */
-            const std::array<glm::dvec2, 2> candidate_points{glm::dvec2{center.x - dx, ps0.y},
-                                                             glm::dvec2{center.x + dx, ps0.y}};
-            for (const auto& candidate_point : candidate_points) {
-                // Make sure we don't double-count endpoints that fall on the halfline as we already accounted for
-                // those above.
-                if (!IsEqual(candidate_point, arc.p0) &&
-                    !IsEqual(candidate_point, arc.p1) &&
-                    candidate_point.x < ps0.x - EPSILON &&
-                    WedgeContainsPoint(arc, candidate_point))
-                {
-                    count += 1; // Add one for full crossing
-                }
+            // Check test segment against segment
+            const glm::dvec2 uv20 = -uv02;
+            const glm::dvec2 uv21 = glm::normalize(p1 - p2);
+            const double cross2 = Cross(uv23, uv20);
+            const double cross3 = Cross(uv23, uv21);
+            if ((IsLessThanZero(cross2) && IsLessThanZero(cross3)) ||        // both to the right
+                (IsGreaterThanZero(cross2) && IsGreaterThanZero(cross3))) {  // both to the left
+                continue;
             }
+
+            hits += 1.0;
         }
     }
 
-    return !(static_cast<int64_t>(glm::floor(count)) & 1);
+    // ensure there is no dangling 0.5 hit (should always be a whole number because of closed paths)
+    assert(static_cast<int64_t>(hits - std::floor(hits) + 0.5) == 0);
+
+    // Want the cross product between test segment and test point to return negative distances when the point is in
+    // the interior.  Therefore, the path should progress to clockwise inorder to ensure exterior points are to the
+    // left of the test segment; i.e. have a positive distance.
+    return static_cast<int64_t>(hits) % 2 == 1; // odd; points inward;
+    //return static_cast<int64_t>(hits) % 2 == 0; // even; points outward
 }
 
 
-bool ProcessContour(std::vector<Endpoint>& endpoints, size_t subset_start, size_t subset_total, bool inverse) {
-    /***
-     * Algorithm:
-     *
-     * - Find the Winding direction and even-odd number,
-     * - If the two disagree, reverse the contour, inplace.
-     */
-    if (!subset_total) { return false; }
-    assert(subset_total >= 3); // Don't expect this; need at least three points
-
-    std::span<Endpoint> subset{endpoints.data() + subset_start, subset_total};
-    assert(subset.front().p == subset.back().p); // Don't expect this; need a closed contour
-
-    if (inverse ^ Winding(subset) ^ EvenOdd(endpoints, subset_start, subset_total)) {
-        Reverse(subset);
-        return true;
-    }
-
-    return false;
+void ReverseWinding(Path_t path) {
+    // This process is required because of the association of d with each pair; i.e. A->B d is associated with B.
+    // After this process, the d value needs to be shifted to the other endpoint; i.e. A.  The value of d is negated
+    // because the direction of rotation between A and B inverts and the sign is used to figure out the outward
+    // direction from the center of the arc circle.
+    auto Transform_f = [](const auto& e0, const auto& e1) { return Endpoint{.p=e0.p, .d=(e1.d == 0) ? 0 : -e1.d}; };
+    std::ranges::transform(path | std::views::pairwise_transform(Transform_f), path.begin(), std::identity{});
+    path.back().d = std::numeric_limits<double>::infinity();
+    std::ranges::reverse(path);
 }
-
-
-void Reverse(std::span<Endpoint>& endpoints) {
-    if (endpoints.empty()) { return; }
-
-    // shift d's first  ... why?
-    double d0 = endpoints[0].d;
-    for (size_t i=0; i<endpoints.size(); ++i) {
-        double d1 = endpoints[i + 1].d;
-        endpoints[i].d = glm::isinf(d1) ? std::numeric_limits<double>::infinity() : -d1;
-    }
-    endpoints.back().d = d0;
-    std::ranges::reverse(endpoints);
-}
-
-
-bool Winding(const std::span<const Endpoint>& endpoints) {
-    /*
-     * Algorithm:
-     *
-     * - Approximate arcs with triangles passing through the mid- and end-points,
-     * - Calculate the area of the contour,
-     * - Return sign.
-     */
-    double area = 0;
-    for (unsigned int i = 1; i < endpoints.size(); i++) {
-        const glm::dvec2& p0 = endpoints[i - 1].p;
-        const glm::dvec2& p1 = endpoints[i].p;
-        double d = endpoints[i].d;
-        assert(!glm::isinf(d));
-        area += Cross(p0, p1);
-        area -= 0.5 * d * glm::dot(p1 - p0, p1 - p0);
-    }
-    return area < 0;
-}
-
-
-// Returns true if outline was modified
-bool WindingFromEvenOdd(std::vector<Endpoint>& endpoints) {
-    /*
-     * Algorithm:
-     *
-     * - Process one contour at a time.
-     * - No short circuit on ret == true, as ProcessContour call chain also modifies endpoints.
-     */
-
-    if (endpoints.empty()) { return false; }
-
-    bool inverse = false;
-    bool ret = false;
-    size_t start = 0; // starting with the first endpoint, include endpoints until you reach one with d == infinity
-    // [infinite, (finite)*]
-    // according to ProcessContour: [infinite, (finite)(2+)]
-    for (size_t i = 1; i < endpoints.size(); i++) {
-        const Endpoint& endpoint = endpoints[i];
-        if (glm::isinf(endpoint.d)) {
-            if (ProcessContour(endpoints, start, i - start, inverse)) { ret = true; }
-            start = i;
-        }
-    }
-    return ret || ProcessContour(endpoints, start, endpoints.size() - start, inverse);
-}
-#endif
 
 
 }

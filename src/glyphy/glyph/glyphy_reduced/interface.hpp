@@ -47,18 +47,19 @@ struct AtlasDataUnit {
 GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, const uint32_t glyph_index) {
     const uint32_t upem = fontface.Upem();
     const double em_scale = 1.0 / static_cast<double>(upem);
-    const double tolerance = 0.5;//em_scale * DEFAULT_EXTRACT_TOLERANCE; // in font design units
+    const double tolerance = DEFAULT_EXTRACT_TOLERANCE;// 0.5;//em_scale * DEFAULT_EXTRACT_TOLERANCE; // in font design units
+    const size_t max_segments = 100;
 
-    GlyphExtractor glyph_extractor{tolerance};
+    GlyphExtractor glyph_extractor{{.tolerance=tolerance, .max_segments=max_segments}};
     glyphy::harfbuzz::FontGetGlyphShape<GlyphExtractor, double>(fontface.Font(), glyph_index, &glyph_extractor);
     if (glyph_extractor.endpoints.empty()) { return {.upem=upem}; }
 
-    // May reverse subset of endpoints and negate their d value;
-    // but otherwise no addition, removal, or modification of endpoints.
-    glyphy::outline::WindingFromEvenOdd(glyph_extractor.endpoints);
-
     // Scale to the unit em.
     std::ranges::for_each(glyph_extractor.endpoints, [em_scale](auto& e) { e.p *= em_scale; });
+
+    // May reverse subset of endpoints and negate their d value;
+    // but otherwise no addition, removal, or modification of endpoints.
+    glyphy::AdjustWinding(glyph_extractor.endpoints);
 
     // Constrain surface to the area containing shape data.
     Extents extents{};
@@ -69,13 +70,7 @@ GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, cons
 
     // Extract "side" information used for sdf interior calculations
     glm::vec4 atlas_info{
-        std::numeric_limits<float>::infinity(), static_cast<float>(glyph_extractor.endpoints.size()), 1.0, 0.0};
-    if (!glyph_extractor.endpoints.empty()) {
-        const glm::dvec2 p_center = Midpoint(offsets, {extents.max_x, extents.max_y});
-        const double epsilon = static_cast<double>(GLYPHY_EPSILON);
-        double min_dist = SdfFromArcList(glyph_extractor.endpoints, p_center, epsilon);
-        atlas_info[2] = min_dist >= 0.0 ? +1.0f : -1.0f;
-    }
+        std::numeric_limits<float>::infinity(), static_cast<float>(glyph_extractor.endpoints.size()), 0.0, 0.0};
 
     // Normalize data to [0..1] range.
     std::ranges::for_each(glyph_extractor.endpoints, [&dims, &offsets, uniform_dim](auto& p) {
@@ -96,6 +91,7 @@ GlyphData<AtlasDataUnit> ExtractGlyph(glyphy::harfbuzz::FontFace& fontface, cons
     std::ranges::transform(glyph_extractor.endpoints, std::back_inserter(glyph_data.atlas_data), [](auto& endpoint) {
         return AtlasDataUnit{
             .p={static_cast<float>(endpoint.p.x), static_cast<float>(endpoint.p.y)},
+            //.d=(std::isfinite(endpoint.d) ? static_cast<float>(0.0f) : GLYPHY_INFINITY)
             .d=(std::isfinite(endpoint.d) ? static_cast<float>(endpoint.d) : GLYPHY_INFINITY)
         };
     });
